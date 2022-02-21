@@ -46,21 +46,14 @@ def filter2d(x: torch.Tensor, kernel: torch.Tensor) -> torch.Tensor:
         torch.Tensor: the convolved tensor of same size and numbers of channels
         as the input.
     """
-    # if x.shape[2] / kernel.shape[0] != x.shape[2] // kernel.shape[0] and \
-    #         x.shape[3] / kernel.shape[1] != x.shape[3] // kernel.shape[1]:
-    #     print("wrong kernel shape")
     hout = (kernel.shape[0] - 1) / 2
     wout = (kernel.shape[1] - 1) / 2
     pad = tuple(np.array([wout, wout, hout, hout]).astype(int))
 
-    # kernel = torch.reshape(kernel,
-    #                        [x.shape[1], 1, kernel.shape[0], kernel.shape[1]])
-
     x = torch.nn.functional.pad(x, pad, mode="replicate")
+
     out = torch.nn.functional.conv2d(x,
-                                     kernel.
-                                     unsqueeze(0).
-                                     repeat(x.shape[1], 1, 1, 1),
+                                     kernel.unsqueeze(0).repeat(x.shape[1], 1, 1, 1),
                                      groups=x.shape[1])
     return out
 
@@ -99,12 +92,10 @@ def spatial_gradient_first_order(x: torch.Tensor,
         - Output: :math:`(B, C, 2, H, W)`
     """
     b, c, h, w = x.shape
-    ksize = get_gausskernel_size(sigma)
-    inp = torch.linspace(-ksize // 2 + 1, ksize // 2, ksize)
-    kernel = gaussian1d(inp, sigma).unsqueeze(0)
-    kernel_deriv = gaussian_deriv1d(inp, sigma).unsqueeze(0)
-    xy = filter2d(filter2d(x, kernel_deriv), kernel.T).unsqueeze(2)
-    yx = filter2d(filter2d(x, kernel_deriv.T), kernel).unsqueeze(2)
+    kernel = torch.tensor([[.5, 0.0, -.5]])
+
+    xy = filter2d(gaussian_filter2d(x, sigma), kernel).unsqueeze(2)
+    yx = filter2d(gaussian_filter2d(x, sigma), kernel.T).unsqueeze(2)
     return torch.cat([xy, yx], dim=2)
 
 
@@ -122,20 +113,15 @@ def spatial_gradient_second_order(x: torch.Tensor,
 
     """
     b, c, h, w = x.shape
-    ksize = get_gausskernel_size(sigma)
-    inp = torch.linspace(-ksize // 2 + 1, ksize // 2, ksize)
-    kernel = gaussian1d(inp, sigma).unsqueeze(0)
-    kernel_deriv = gaussian_deriv1d(inp, sigma).unsqueeze(0)
-    kernel_deriv_sqrt = gaussian_deriv1d(inp, sigma / np.sqrt(2)).unsqueeze(0)
 
-    xy = filter2d(filter2d(x, kernel_deriv.T), kernel_deriv).unsqueeze(2)
-    yy = filter2d(
-            filter2d(filter2d(x, kernel_deriv_sqrt.T), kernel_deriv_sqrt.T),
-            kernel).unsqueeze(2)
-    xx = filter2d(filter2d(filter2d(x, kernel_deriv_sqrt), kernel_deriv_sqrt),
-                  kernel.T).unsqueeze(2)
-    # xx = filter2d(filter2d(x, kernel_deriv), kernel.T).unsqueeze(2)
-    # yy = filter2d(filter2d(x, kernel_deriv), kernel.T).unsqueeze(2)
+    kernel = torch.tensor([[.5, 0.0, -.5]])
+
+    fo = spatial_gradient_first_order(x, sigma)
+    dx, dy = fo[:, :, 0], fo[:, :, 1]
+
+    xx = filter2d(dx, kernel).unsqueeze(2)
+    yy = filter2d(dy, kernel.T).unsqueeze(2)
+    xy = filter2d(dx, kernel.T).unsqueeze(2)
 
     return torch.cat([xx, xy, yy], dim=2)
 
@@ -168,7 +154,7 @@ def affine(center: torch.Tensor, unitx: torch.Tensor,
     return out
 
 
-def extract_affine_patches(input: torch.Tensor,
+def extract_affine_patches(imgs: torch.Tensor,
                            A: torch.Tensor,
                            img_idxs: torch.Tensor,
                            PS: int = 32,
@@ -177,7 +163,7 @@ def extract_affine_patches(input: torch.Tensor,
     Extract patches defined by affine transformations A from image tensor X.
     
     Args:
-        input: (torch.Tensor) images, :math:`(B, CH, H, W)`
+        imgs: (torch.Tensor) images, :math:`(B, CH, H, W)`
         A: (torch.Tensor). :math:`(N, 3, 3)`
         img_idxs: (torch.Tensor). :math:`(N, 1)` indexes of image in batch, where patch belongs to
         PS: (int) output patch size in pixels, default = 32
@@ -187,10 +173,10 @@ def extract_affine_patches(input: torch.Tensor,
         patches: (torch.Tensor) :math:`(N, CH, PS,PS)`
     """
 
-    b, ch, h, w = input.size()
+    b, ch, h, w = imgs.size()
     num_patches = A.size(0)
 
-    images = input[img_idxs]
+    images = imgs[img_idxs]
 
     # Functions, which might be useful: torch.meshgrid, torch.nn.functional.grid_sample
     # You are not allowed to use function torch.nn.functional.affine_grid
