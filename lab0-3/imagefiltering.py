@@ -182,15 +182,49 @@ def extract_affine_patches(imgs: torch.Tensor,
     # You are not allowed to use function torch.nn.functional.affine_grid
     # Note, that F.grid_sample expects coordinates in a range from -1 to 1
     # where (-1, -1) - topleft, (1,1) - bottomright and (0,0) center of the image
+    # with torch.no_grad():
+    #     grid_x, grid_y = torch.meshgrid(torch.linspace(-ext, ext, PS),
+    #                                     torch.linspace(-ext, ext, PS))
+    #     grid_x, grid_y = grid_x.repeat(num_patches, 1, 1), grid_y.repeat(num_patches, 1, 1)
+    #     grid_x, grid_y = grid_x.flatten(start_dim=1), grid_y.flatten(start_dim=1)
+    #
+    #     # to homogeneous coordinates, to image coordinates
+    #     grid = torch.cat((grid_x.unsqueeze(1), grid_y.unsqueeze(1), torch.ones(grid_y.size()).unsqueeze(1)), dim=1)
+    #     grid = torch.cat([(A[i] @ grid[i])[:-1].unsqueeze(0) for i in range(num_patches)], dim=0)
+    #
+    #     # resize to (N, H_p, W_p, 2)
+    #     grid = torch.cat([torch.cat([grid[:, c, i * PS:(i + 1) * PS].unsqueeze(2) for i in range(PS)], dim=2).unsqueeze(3) for c in range(2)], dim=3)
+    #
+    #     _, _, h, w = imgs.size()
+    #     grid[..., 0] = 2 * grid[..., 0] / w - 1  # coordinated to [-1, 1] x [-1, 1] range
+    #     grid[..., 1] = 2 * grid[..., 1] / h - 1
+    #
+    #     out = F.grid_sample(imgs[img_idxs], grid, mode='bilinear')
+    # return out
+
     inp = torch.linspace(-ext, ext, PS)
 
-    gridx, gridy = torch.meshgrid(inp, inp, indexing="ij")
+    gridy, gridx = torch.meshgrid(inp, inp)
+    gridz = torch.ones_like(gridx)
 
-    out = torch.zeros(num_patches, ch, PS, PS)
+    init_grid = torch.zeros(num_patches, 3, inp.shape[0], inp.shape[0])
+
+    init_grid[:, 0] = gridx
+    init_grid[:, 1] = gridy
+    init_grid[:, 2] = gridz
+    right_mat = torch.reshape(init_grid, [num_patches, 3, inp.shape[0] ** 2])
+    res_grid = A @ right_mat
+    res_grid = torch.reshape(res_grid, [num_patches, 3, inp.shape[0], inp.shape[0]])[:, :2]
+    res_grid[:, 0] = (res_grid[:, 0] * 2 / w) - 1
+    res_grid[:, 1] = (res_grid[:, 1] * 2 / h) - 1
+
+    res_grid = torch.stack((res_grid[:, 0], res_grid[:, 1]), 3)
+    out = torch.nn.functional.grid_sample(images, res_grid, mode='bilinear')
+
     return out
 
 
-def extract_antializased_affine_patches(input: torch.Tensor,
+def extract_antializased_affine_patches(inp: torch.Tensor,
                                         A: torch.Tensor,
                                         img_idxs: torch.Tensor,
                                         PS: int = 32,
@@ -200,7 +234,7 @@ def extract_antializased_affine_patches(input: torch.Tensor,
     It runs your implementation of the `extract_affine_patches` function, so it would not work w/o it.
     
     Args:
-        input: (torch.Tensor) images, :math:`(B, CH, H, W)`
+        inp: (torch.Tensor) images, :math:`(B, CH, H, W)`
         A: (torch.Tensor). :math:`(N, 3, 3)`
         img_idxs: (torch.Tensor). :math:`(N, 1)` indexes of image in batch, where patch belongs to
         PS: (int) output patch size in pixels, default = 32
@@ -210,13 +244,13 @@ def extract_antializased_affine_patches(input: torch.Tensor,
         patches: (torch.Tensor) :math:`(N, CH, PS,PS)`
     """
     import kornia
-    b, ch, h, w = input.size()
+    b, ch, h, w = inp.size()
     num_patches = A.size(0)
     scale = (kornia.feature.get_laf_scale(
             ext * A.unsqueeze(0)[:, :, :2, :]) / float(PS))[0]
     half: float = 0.5
     pyr_idx = (scale.log2()).relu().long()
-    cur_img = input
+    cur_img = inp
     cur_pyr_level = 0
     out = torch.zeros(num_patches, ch, PS, PS).to(device=A.device,
                                                   dtype=A.dtype)

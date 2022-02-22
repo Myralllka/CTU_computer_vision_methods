@@ -1,0 +1,5 @@
+*__pycache__/
+*.idea
+mpv-templates-backup/
+*.ipynb_checkpoints/
+*.zip
