@@ -123,7 +123,93 @@ def spatial_gradient_second_order(x: torch.Tensor,
     yy = filter2d(dy, kernel.T).unsqueeze(2)
     xy = filter2d(dx, kernel.T).unsqueeze(2)
 
-    return torch.cat([xx, xy, yy], dim=2)
+    # return torch.cat([xx, xy, yy], dim=2)
+    return spatial_gradient_second_order_fast(x, sigma)
+
+
+# Reference solution for hw0
+def spatial_gradient_first_order_fast(x: torch.Tensor, sigma: float) -> torch.Tensor:
+    """Computes the first order image derivative in both x and y directions using Gaussian derivative
+
+    Return:
+        torch.Tensor: spatial gradients
+
+    Shape:
+        - Input: :math:`(B, C, H, W)`
+        - Output: :math:`(B, C, 2, H, W)`
+
+    """
+    b, c, h, w = x.shape
+    ksize = get_gausskernel_size(sigma)
+    # HIDE_IN_TEMPLATE_START
+    kernel_inp = torch.linspace(-float(ksize // 2), float(ksize // 2), ksize)
+    filtered_input = gaussian_filter2d(x, sigma)
+    gx = torch.tensor([[0.5, 0, -0.5]]).float()  # .view(1,-1)
+    # g = gaussian1d(kernel_inp, sigma).reshape(1,-1)
+    # kernel_x = torch.mm(g.t(),gx)
+    outx = filter2d(filtered_input, gx)
+    outy = filter2d(filtered_input, gx.t())
+    out = torch.cat([outx.unsqueeze(2), outy.unsqueeze(2)], dim=2)
+    # HIDE_IN_TEMPLATE_STOP
+    # SHOW_IN_TEMPLATE out =  torch.zeros(b,c,2,h,w)
+    return out
+
+
+# Reference solution for hw0
+def filter2d_fast(x: torch.Tensor, kernel: torch.Tensor) -> torch.Tensor:
+    """Function that convolves a tensor with a kernel.
+
+    The function applies a given kernel to a tensor. The kernel is applied
+    independently at each depth channel of the tensor. Before applying the
+    kernel, the function applies padding according to the specified mode so
+    that the output remains in the same shape.
+
+    Args:
+        input (torch.Tensor): the input tensor with shape of
+          :math:`(B, C, H, W)`.
+        kernel (torch.Tensor): the kernel to be convolved with the input
+          tensor. The kernel shape must be :math:`(kH, kW)`.
+    Return:
+        torch.Tensor: the convolved tensor of same size and numbers of channels
+        as the input.
+    """
+    # SHOW_IN_TEMPLATE out =  x
+    # HIDE_IN_TEMPLATE_START
+    b, c, h, w = x.shape
+    height, width = kernel.size()
+    tmp_kernel: torch.Tensor = kernel[None, None, ...].to(x.device).to(x.dtype)
+    padding_shape = [width // 2, width // 2, height // 2, height // 2]
+    input_pad: torch.Tensor = F.pad(x, padding_shape, mode='replicate')
+    out = F.conv2d(input_pad, tmp_kernel.expand(c, -1, -1, -1), groups=c, padding=0, stride=1)
+    # HIDE_IN_TEMPLATE_STOP
+    # SHOW_IN_TEMPLATE out =  x
+    return out
+
+
+# Reference solution for hw0
+def spatial_gradient_second_order_fast(x: torch.Tensor, sigma: float) -> torch.Tensor:
+    """Computes the second order image derivative in xx, xy, yy directions using Gaussian derivative
+
+    Return:
+        torch.Tensor: spatial gradients
+
+    Shape:
+        - Input: :math:`(B, C, H, W)`
+        - Output: :math:`(B, C, 3, H, W)`
+
+    """
+    b, c, h, w = x.shape
+    ksize = get_gausskernel_size(sigma)
+    # HIDE_IN_TEMPLATE_START
+    gx = torch.tensor([[0.5, 0, -0.5]]).to(x.device, x.dtype)
+    first_order = spatial_gradient_first_order_fast(x, sigma)
+    out = torch.cat([filter2d_fast(first_order[:, :, 0], gx).unsqueeze(2),
+                     filter2d_fast(first_order[:, :, 0], gx.t()).unsqueeze(2),
+                     filter2d_fast(first_order[:, :, 1], gx.t()).unsqueeze(2)], dim=2)
+
+    # HIDE_IN_TEMPLATE_STOP
+    # SHOW_IN_TEMPLATE out =  torch.zeros(b,c,3,h,w)
+    return out
 
 
 def affine(center: torch.Tensor, unitx: torch.Tensor,
